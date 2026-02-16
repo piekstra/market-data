@@ -24,11 +24,19 @@ It is part of a modular ecosystem of independent repositories. Each repo has a f
 
 ### What This Repo Is Not
 
-- **Not a real-time streaming feed.** It can fetch today's candles, but WebSocket streaming and sub-second data belong in a dedicated service.
+- **Not a real-time streaming feed.** It can fetch today's candles, but WebSocket streaming and sub-second data belong in [market-data-live](https://github.com/piekstra/market-data-live).
 - **Not a trading engine.** No strategy logic, order management, or execution belongs here.
-- **Not for options data.** Options have fundamentally different schemas (strike, expiry, greeks, chains). Options data belongs in its own dedicated repo with its own types and store.
+- **Not for options data.** Options have fundamentally different schemas (strike, expiry, greeks, chains). Options data belongs in [options-data](https://github.com/piekstra/options-data).
 - **Not a general-purpose time series database.** It stores 5-minute OHLCV candles for equities/ETFs. If the scope creeps beyond that, it should be a separate repo.
 - **Not provider-specific.** The provider layer is an abstraction. Adding data sources is welcome; coupling the core to any single provider is not.
+
+### Related Repositories
+
+| Repository | Purpose |
+|------------|---------|
+| [market-data](https://github.com/piekstra/market-data) | Historical + recent 5-min equity/ETF candles (this repo) |
+| [market-data-live](https://github.com/piekstra/market-data-live) | Real-time streaming market data via WebSocket |
+| [options-data](https://github.com/piekstra/options-data) | Historical options chains, greeks, and pricing |
 
 ## Overview
 
