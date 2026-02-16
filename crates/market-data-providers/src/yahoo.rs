@@ -122,9 +122,7 @@ fn parse_yahoo_result(result: &YahooResult) -> Result<Vec<Candle>, ProviderError
         let timestamp = Utc
             .timestamp_opt(ts, 0)
             .single()
-            .ok_or_else(|| {
-                ProviderError::Parse(format!("invalid unix timestamp: {ts}"))
-            })?;
+            .ok_or_else(|| ProviderError::Parse(format!("invalid unix timestamp: {ts}")))?;
 
         candles.push(Candle {
             timestamp,

@@ -1,14 +1,20 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use chrono::{NaiveDate, TimeZone, Utc};
 use market_data_core::candle::Candle;
 use reqwest::Client;
 use rust_decimal::Decimal;
 use serde::Deserialize;
+use tracing::{debug, info, warn};
 
 use crate::error::ProviderError;
 use crate::provider::CandleProvider;
 
 const ALPACA_DATA_BASE_URL: &str = "https://data.alpaca.markets/v2";
+
+/// Maximum number of retries on rate limit before giving up.
+const MAX_RATE_LIMIT_RETRIES: u32 = 5;
 
 /// Alpaca market data provider.
 /// Authenticates via APCA-API-KEY-ID and APCA-API-SECRET-KEY headers.
@@ -42,6 +48,105 @@ impl AlpacaProvider {
             api_key_id,
             api_secret_key,
             base_url: base_url.unwrap_or_else(|| ALPACA_DATA_BASE_URL.to_string()),
+        }
+    }
+
+    /// Internal: fetch bars with pagination and rate limit retry.
+    async fn fetch_bars_paginated(
+        &self,
+        symbol: &str,
+        start: &str,
+        end: &str,
+    ) -> Result<Vec<AlpacaBar>, ProviderError> {
+        let mut all_bars = Vec::new();
+        let mut page_token: Option<String> = None;
+
+        loop {
+            let bars = self
+                .fetch_bars_page(symbol, start, end, page_token.as_deref())
+                .await?;
+
+            if let Some(b) = bars.bars {
+                all_bars.extend(b);
+            }
+
+            match bars.next_page_token {
+                Some(token) if !token.is_empty() => page_token = Some(token),
+                _ => break,
+            }
+        }
+
+        Ok(all_bars)
+    }
+
+    /// Fetch a single page of bars with rate limit retry.
+    async fn fetch_bars_page(
+        &self,
+        symbol: &str,
+        start: &str,
+        end: &str,
+        page_token: Option<&str>,
+    ) -> Result<AlpacaBarsResponse, ProviderError> {
+        let mut retries = 0;
+
+        loop {
+            let mut request = self
+                .client
+                .get(format!("{}/stocks/{}/bars", self.base_url, symbol))
+                .header("APCA-API-KEY-ID", &self.api_key_id)
+                .header("APCA-API-SECRET-KEY", &self.api_secret_key)
+                .query(&[
+                    ("timeframe", "5Min"),
+                    ("start", start),
+                    ("end", end),
+                    ("adjustment", "split"),
+                    ("feed", "iex"),
+                    ("limit", "10000"),
+                ]);
+
+            if let Some(token) = page_token {
+                request = request.query(&[("page_token", token)]);
+            }
+
+            let response = request.send().await?;
+
+            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                retries += 1;
+                if retries > MAX_RATE_LIMIT_RETRIES {
+                    return Err(ProviderError::RateLimited {
+                        retry_after_secs: 60,
+                    });
+                }
+
+                let wait_secs = response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(60);
+
+                warn!(
+                    "{symbol}: rate limited, waiting {wait_secs}s (retry {retries}/{MAX_RATE_LIMIT_RETRIES})"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+                continue;
+            }
+
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                let body = response.text().await.unwrap_or_default();
+                return Err(ProviderError::Api {
+                    status,
+                    message: body,
+                });
+            }
+
+            let body: AlpacaBarsResponse = response
+                .json()
+                .await
+                .map_err(|e| ProviderError::Parse(format!("failed to parse response: {e}")))?;
+
+            return Ok(body);
         }
     }
 }
@@ -85,6 +190,20 @@ impl AlpacaBar {
     }
 }
 
+/// Group candles by their UTC date.
+fn group_candles_by_date(candles: Vec<Candle>) -> Vec<(NaiveDate, Vec<Candle>)> {
+    let mut by_date: BTreeMap<NaiveDate, Vec<Candle>> = BTreeMap::new();
+    for candle in candles {
+        let date = candle.timestamp.date_naive();
+        by_date.entry(date).or_default().push(candle);
+    }
+    // Sort candles within each date
+    for candles in by_date.values_mut() {
+        candles.sort_by_key(|c| c.timestamp);
+    }
+    by_date.into_iter().collect()
+}
+
 #[async_trait]
 impl CandleProvider for AlpacaProvider {
     fn name(&self) -> &str {
@@ -103,70 +222,45 @@ impl CandleProvider for AlpacaProvider {
             .from_utc_datetime(&date.succ_opt().unwrap().and_hms_opt(0, 0, 0).unwrap())
             .to_rfc3339();
 
-        let mut all_candles = Vec::new();
-        let mut page_token: Option<String> = None;
+        let bars = self.fetch_bars_paginated(symbol, &start, &end).await?;
 
-        loop {
-            let mut request = self
-                .client
-                .get(format!("{}/stocks/{}/bars", self.base_url, symbol))
-                .header("APCA-API-KEY-ID", &self.api_key_id)
-                .header("APCA-API-SECRET-KEY", &self.api_secret_key)
-                .query(&[
-                    ("timeframe", "5Min"),
-                    ("start", &start),
-                    ("end", &end),
-                    ("adjustment", "split"),
-                    ("feed", "iex"),
-                    ("limit", "10000"),
-                ]);
+        let mut candles: Vec<Candle> = bars
+            .iter()
+            .map(|b| b.to_candle())
+            .collect::<Result<_, _>>()?;
+        candles.sort_by_key(|c| c.timestamp);
+        Ok(candles)
+    }
 
-            if let Some(token) = &page_token {
-                request = request.query(&[("page_token", token.as_str())]);
-            }
+    /// Fetch candles for a full date range in bulk using the Alpaca API.
+    /// This uses a single paginated API call for the entire range, then groups by date.
+    async fn fetch_candles_range(
+        &self,
+        symbol: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<(NaiveDate, Vec<Candle>)>, ProviderError> {
+        let start_rfc = Utc
+            .from_utc_datetime(&start.and_hms_opt(0, 0, 0).unwrap())
+            .to_rfc3339();
+        let end_rfc = Utc
+            .from_utc_datetime(&end.succ_opt().unwrap().and_hms_opt(0, 0, 0).unwrap())
+            .to_rfc3339();
 
-            let response = request.send().await?;
+        info!("{symbol}: fetching range {start} to {end} from Alpaca");
 
-            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                let retry_after = response
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(60);
-                return Err(ProviderError::RateLimited {
-                    retry_after_secs: retry_after,
-                });
-            }
+        let bars = self
+            .fetch_bars_paginated(symbol, &start_rfc, &end_rfc)
+            .await?;
 
-            if !response.status().is_success() {
-                let status = response.status().as_u16();
-                let body = response.text().await.unwrap_or_default();
-                return Err(ProviderError::Api {
-                    status,
-                    message: body,
-                });
-            }
+        debug!("{symbol}: received {} total bars", bars.len());
 
-            let body: AlpacaBarsResponse = response
-                .json()
-                .await
-                .map_err(|e| ProviderError::Parse(format!("failed to parse response: {e}")))?;
+        let candles: Vec<Candle> = bars
+            .iter()
+            .map(|b| b.to_candle())
+            .collect::<Result<_, _>>()?;
 
-            if let Some(bars) = body.bars {
-                for bar in &bars {
-                    all_candles.push(bar.to_candle()?);
-                }
-            }
-
-            match body.next_page_token {
-                Some(token) if !token.is_empty() => page_token = Some(token),
-                _ => break,
-            }
-        }
-
-        all_candles.sort_by_key(|c| c.timestamp);
-        Ok(all_candles)
+        Ok(group_candles_by_date(candles))
     }
 }
 
@@ -234,5 +328,44 @@ mod tests {
 
         let response: AlpacaBarsResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.next_page_token.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn group_by_date_works() {
+        let candles = vec![
+            Candle {
+                timestamp: Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap(),
+                open: dec!(150.00),
+                high: dec!(151.00),
+                low: dec!(149.00),
+                close: dec!(150.50),
+                volume: 1000,
+            },
+            Candle {
+                timestamp: Utc.with_ymd_and_hms(2025, 1, 16, 14, 30, 0).unwrap(),
+                open: dec!(151.00),
+                high: dec!(152.00),
+                low: dec!(150.00),
+                close: dec!(151.50),
+                volume: 2000,
+            },
+            Candle {
+                timestamp: Utc.with_ymd_and_hms(2025, 1, 15, 14, 35, 0).unwrap(),
+                open: dec!(150.50),
+                high: dec!(151.50),
+                low: dec!(149.50),
+                close: dec!(151.00),
+                volume: 1500,
+            },
+        ];
+
+        let grouped = group_candles_by_date(candles);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].0, NaiveDate::from_ymd_opt(2025, 1, 15).unwrap());
+        assert_eq!(grouped[0].1.len(), 2);
+        // Should be sorted by timestamp within the day
+        assert!(grouped[0].1[0].timestamp < grouped[0].1[1].timestamp);
+        assert_eq!(grouped[1].0, NaiveDate::from_ymd_opt(2025, 1, 16).unwrap());
+        assert_eq!(grouped[1].1.len(), 1);
     }
 }

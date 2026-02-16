@@ -7,7 +7,7 @@ use market_data_core::store::CandleStore;
 use market_data_providers::alpaca::AlpacaProvider;
 use market_data_providers::provider::CandleProvider;
 use market_data_providers::yahoo::YahooProvider;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 #[derive(Parser)]
 #[command(
@@ -77,6 +77,31 @@ fn create_provider(name: &str) -> Result<Box<dyn CandleProvider>> {
     }
 }
 
+/// Find contiguous date ranges from a sorted list of dates.
+/// Groups consecutive weekdays together to minimize API calls.
+fn contiguous_ranges(dates: &[NaiveDate]) -> Vec<(NaiveDate, NaiveDate)> {
+    if dates.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ranges = Vec::new();
+    let mut range_start = dates[0];
+    let mut prev = dates[0];
+
+    for &date in &dates[1..] {
+        // Allow gaps of up to 3 days (weekend + possible holiday)
+        // to keep ranges together and reduce API calls
+        let gap = (date - prev).num_days();
+        if gap > 4 {
+            ranges.push((range_start, prev));
+            range_start = date;
+        }
+        prev = date;
+    }
+    ranges.push((range_start, prev));
+    ranges
+}
+
 async fn cmd_populate(
     store: &CandleStore,
     symbols: &[String],
@@ -102,26 +127,40 @@ async fn cmd_populate(
         }
 
         info!(
-            "{symbol}: fetching {} missing date(s) from {} to {}",
+            "{symbol}: {} missing date(s) from {} to {}",
             dates_to_fetch.len(),
             dates_to_fetch.first().unwrap(),
             dates_to_fetch.last().unwrap(),
         );
 
-        for date in &dates_to_fetch {
-            match provider.fetch_candles(&symbol, *date).await {
-                Ok(candles) => {
-                    if candles.is_empty() {
-                        debug!("{symbol} {date}: no candles (holiday or non-trading day)");
-                        continue;
+        // Group missing dates into contiguous ranges for efficient bulk fetching
+        let ranges = contiguous_ranges(&dates_to_fetch);
+        info!("{symbol}: fetching in {} range(s)", ranges.len());
+
+        for (range_start, range_end) in &ranges {
+            match provider
+                .fetch_candles_range(&symbol, *range_start, *range_end)
+                .await
+            {
+                Ok(day_groups) => {
+                    let mut days_written = 0;
+                    let mut total_candles = 0;
+                    for (date, candles) in &day_groups {
+                        if candles.is_empty() {
+                            continue;
+                        }
+                        store
+                            .write_day(&symbol, *date, candles)
+                            .with_context(|| format!("failed to write {symbol} {date}"))?;
+                        days_written += 1;
+                        total_candles += candles.len();
                     }
-                    store
-                        .write_day(&symbol, *date, &candles)
-                        .with_context(|| format!("failed to write {symbol} {date}"))?;
-                    info!("{symbol} {date}: wrote {} candle(s)", candles.len());
+                    info!(
+                        "{symbol}: {range_start} to {range_end}: wrote {total_candles} candle(s) across {days_written} day(s)"
+                    );
                 }
                 Err(e) => {
-                    warn!("{symbol} {date}: fetch failed: {e}");
+                    warn!("{symbol}: {range_start} to {range_end}: fetch failed: {e}");
                 }
             }
         }
