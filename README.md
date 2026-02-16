@@ -2,6 +2,31 @@
 
 Parquet-backed store for 5-minute stock market candle data, designed for backtesting.
 
+## Purpose and Principles
+
+This repository exists to solve one problem well: **reliable, efficient access to historical intraday candle data for backtesting trading strategies.**
+
+It is part of a modular ecosystem of independent repositories. Each repo has a focused responsibility and can be used on its own or composed with others. This repo is the data layer — it owns the storage format, the retrieval API, and the tools to populate data. It does not contain trading logic, strategy evaluation, or live market interaction.
+
+### Core Principles
+
+- **Data is the product.** The Parquet files committed to this repo are first-class artifacts. Any project can clone this repo and immediately have access to historical candle data without running population scripts or configuring API keys.
+
+- **Single canonical format.** All data is stored as daily Parquet files with a fixed schema (timestamp, OHLCV). One file per symbol per trading day. This convention is non-negotiable — it is what makes the store predictable for consumers.
+
+- **Idempotent population.** Running the populate command is always safe. It checks what exists, fetches what's missing, and never re-downloads data that's already present. Data can be incrementally extended forward or backward in time.
+
+- **Read-optimized for Rust.** The core library (`market-data-core`) is the primary public API. It is designed to be a dependency for Rust projects that need candle data. The provider and CLI crates are supporting infrastructure.
+
+- **Precision over convenience.** Prices are stored as exact decimal strings, not floating-point. Timestamps are UTC microseconds. Session classification is derived at query time, not baked into the data. These choices prioritize correctness for financial applications.
+
+### What This Repo Is Not
+
+- **Not a live data feed.** This is for historical data. Real-time market data belongs elsewhere.
+- **Not a trading engine.** No strategy logic, order management, or execution belongs here.
+- **Not a general-purpose time series database.** It stores 5-minute OHLCV candles for equities/ETFs. If the scope creeps beyond that, it should be a separate repo.
+- **Not provider-specific.** The provider layer is an abstraction. Adding data sources is welcome; coupling the core to any single provider is not.
+
 ## Overview
 
 This workspace provides:
