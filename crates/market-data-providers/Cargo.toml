@@ -1,0 +1,21 @@
+[package]
+name = "market-data-providers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Data providers (Alpaca, Yahoo Finance) for fetching 5-minute candle data"
+
+[dependencies]
+market-data-core = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+rust_decimal_macros = { workspace = true }

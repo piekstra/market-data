@@ -1,0 +1,19 @@
+[package]
+name = "market-data-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core types and Parquet-backed store for 5-minute stock market candle data"
+
+[dependencies]
+arrow = { workspace = true }
+parquet = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+rust_decimal_macros = { workspace = true }

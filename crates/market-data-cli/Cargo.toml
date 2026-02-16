@@ -1,0 +1,20 @@
+[package]
+name = "market-data-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI tool for populating and managing 5-minute candle data"
+
+[[bin]]
+name = "market-data"
+path = "src/main.rs"
+
+[dependencies]
+market-data-core = { workspace = true }
+market-data-providers = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
