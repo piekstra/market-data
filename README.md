@@ -4,9 +4,9 @@ Parquet-backed store for 5-minute stock market candle data, designed for backtes
 
 ## Purpose and Principles
 
-This repository exists to solve one problem well: **reliable, efficient access to historical intraday candle data for backtesting trading strategies.**
+This repository exists to solve one problem well: **reliable, efficient access to intraday candle data for equities and ETFs.**
 
-It is part of a modular ecosystem of independent repositories. Each repo has a focused responsibility and can be used on its own or composed with others. This repo is the data layer — it owns the storage format, the retrieval API, and the tools to populate data. It does not contain trading logic, strategy evaluation, or live market interaction.
+It is part of a modular ecosystem of independent repositories. Each repo has a focused responsibility and can be used on its own or composed with others. This repo is the data layer — it owns the storage format, the retrieval API, and the tools to populate data. It does not contain trading logic, strategy evaluation, or real-time streaming.
 
 ### Core Principles
 
@@ -14,7 +14,9 @@ It is part of a modular ecosystem of independent repositories. Each repo has a f
 
 - **Single canonical format.** All data is stored as daily Parquet files with a fixed schema (timestamp, OHLCV). One file per symbol per trading day. This convention is non-negotiable — it is what makes the store predictable for consumers.
 
-- **Idempotent population.** Running the populate command is always safe. It checks what exists, fetches what's missing, and never re-downloads data that's already present. Data can be incrementally extended forward or backward in time.
+- **Idempotent population.** Running the populate command is always safe. It checks what exists, fetches what's missing, and never re-downloads data that's already present. Data can be incrementally extended forward or backward in time — including fetching today's candles.
+
+- **Historical and recent, not real-time.** This repo covers historical data and recent data up to and including today. Populate can fetch the current day's candles on demand. However, true real-time streaming (WebSocket feeds, sub-second updates) belongs in a separate service.
 
 - **Read-optimized for Rust.** The core library (`market-data-core`) is the primary public API. It is designed to be a dependency for Rust projects that need candle data. The provider and CLI crates are supporting infrastructure.
 
@@ -22,8 +24,9 @@ It is part of a modular ecosystem of independent repositories. Each repo has a f
 
 ### What This Repo Is Not
 
-- **Not a live data feed.** This is for historical data. Real-time market data belongs elsewhere.
+- **Not a real-time streaming feed.** It can fetch today's candles, but WebSocket streaming and sub-second data belong in a dedicated service.
 - **Not a trading engine.** No strategy logic, order management, or execution belongs here.
+- **Not for options data.** Options have fundamentally different schemas (strike, expiry, greeks, chains). Options data belongs in its own dedicated repo with its own types and store.
 - **Not a general-purpose time series database.** It stores 5-minute OHLCV candles for equities/ETFs. If the scope creeps beyond that, it should be a separate repo.
 - **Not provider-specific.** The provider layer is an abstraction. Adding data sources is welcome; coupling the core to any single provider is not.
 
