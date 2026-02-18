@@ -46,6 +46,78 @@ impl Default for YahooProvider {
     }
 }
 
+impl YahooProvider {
+    /// Fetch daily OHLCV bars for a symbol over a date range (inclusive).
+    /// Yahoo provides 20+ years of split-adjusted daily data with no authentication.
+    /// Returns candles sorted by timestamp.
+    pub async fn fetch_daily_bars(
+        &self,
+        symbol: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<Candle>, ProviderError> {
+        let start_ts = start.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        let end_ts = end
+            .succ_opt()
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+
+        let response = self
+            .client
+            .get(format!("{}/{}", self.base_url, symbol))
+            .query(&[
+                ("period1", &start_ts.to_string()),
+                ("period2", &end_ts.to_string()),
+                ("interval", &"1d".to_string()),
+            ])
+            .send()
+            .await?;
+
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(ProviderError::RateLimited {
+                retry_after_secs: 60,
+            });
+        }
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::Api {
+                status,
+                message: body,
+            });
+        }
+
+        let body: YahooResponse = response
+            .json()
+            .await
+            .map_err(|e| ProviderError::Parse(format!("failed to parse response: {e}")))?;
+
+        if let Some(error) = body.chart.error {
+            return Err(ProviderError::Api {
+                status: 0,
+                message: format!("{}: {}", error.code, error.description),
+            });
+        }
+
+        let results = body
+            .chart
+            .result
+            .ok_or_else(|| ProviderError::Parse("no results in response".into()))?;
+
+        if results.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut candles = parse_yahoo_result(&results[0])?;
+        candles.sort_by_key(|c| c.timestamp);
+        Ok(candles)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct YahooResponse {
     chart: YahooChart,
@@ -287,6 +359,38 @@ mod tests {
         let response: YahooResponse = serde_json::from_str(json).unwrap();
         assert!(response.chart.error.is_some());
         assert_eq!(response.chart.error.as_ref().unwrap().code, "Not Found");
+    }
+
+    #[test]
+    fn parse_yahoo_daily_response() {
+        // Daily bars have the same JSON structure as intraday
+        let json = r#"{
+            "chart": {
+                "result": [{
+                    "timestamp": [1609459200, 1609545600, 1609632000],
+                    "indicators": {
+                        "quote": [{
+                            "open": [375.31, 380.12, 382.50],
+                            "high": [380.00, 385.00, 390.00],
+                            "low": [373.00, 378.50, 381.00],
+                            "close": [378.85, 383.20, 388.75],
+                            "volume": [50000000, 45000000, 55000000]
+                        }]
+                    }
+                }],
+                "error": null
+            }
+        }"#;
+
+        let response: YahooResponse = serde_json::from_str(json).unwrap();
+        let results = response.chart.result.unwrap();
+        let candles = parse_yahoo_result(&results[0]).unwrap();
+
+        assert_eq!(candles.len(), 3);
+        assert_eq!(candles[0].volume, 50000000);
+        assert_eq!(candles[2].volume, 55000000);
+        // Verify prices are parsed correctly
+        assert!(candles[0].close > dec!(378.0) && candles[0].close < dec!(379.0));
     }
 
     #[test]
