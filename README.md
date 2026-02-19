@@ -1,6 +1,6 @@
 # market-data
 
-Parquet-backed store for 5-minute stock market candle data, designed for backtesting.
+Parquet-backed store for stock market candle data, designed for backtesting.
 
 ## Purpose and Principles
 
@@ -27,7 +27,7 @@ It is part of a modular ecosystem of independent repositories. Each repo has a f
 - **Not a real-time streaming feed.** It can fetch today's candles, but WebSocket streaming and sub-second data belong in [market-data-live](https://github.com/piekstra/market-data-live).
 - **Not a trading engine.** No strategy logic, order management, or execution belongs here.
 - **Not for options data.** Options have fundamentally different schemas (strike, expiry, greeks, chains). Options data belongs in [options-data](https://github.com/piekstra/options-data).
-- **Not a general-purpose time series database.** It stores 5-minute OHLCV candles for equities/ETFs. If the scope creeps beyond that, it should be a separate repo.
+- **Not a general-purpose time series database.** It stores OHLCV candles for equities, ETFs, and CBOE indices. If the scope creeps beyond that, it should be a separate repo.
 - **Not provider-specific.** The provider layer is an abstraction. Adding data sources is welcome; coupling the core to any single provider is not.
 
 ### Related Repositories
@@ -43,7 +43,7 @@ It is part of a modular ecosystem of independent repositories. Each repo has a f
 This workspace provides:
 
 - **`market-data-core`** — Core library with `Candle` type, `CandleStore` API, and Parquet I/O. This is the primary dependency for consuming data.
-- **`market-data-providers`** — Data fetching from Alpaca and Yahoo Finance APIs.
+- **`market-data-providers`** — Data fetching from Alpaca, Yahoo Finance, and CBOE APIs.
 - **`market-data-cli`** — CLI tool for populating and managing data.
 
 ## Data Layout
@@ -52,7 +52,7 @@ This workspace provides:
 data/{SYMBOL}/{YYYY}/{MM}/{YYYY-MM-DD}.parquet
 ```
 
-One Parquet file per symbol per trading day. Each file contains 5-minute OHLCV candles with columns: `timestamp` (UTC microseconds), `open`, `high`, `low`, `close` (decimal strings), `volume` (i64).
+One Parquet file per symbol per trading day. Each file contains OHLCV candles with columns: `timestamp` (UTC microseconds), `open`, `high`, `low`, `close` (decimal strings), `volume` (i64). Files typically contain 5-minute bars (Alpaca, Yahoo) or daily bars (CBOE).
 
 ## Quick Start
 
@@ -62,8 +62,14 @@ One Parquet file per symbol per trading day. Each file contains 5-minute OHLCV c
 # Using Alpaca (requires ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY env vars)
 cargo run -p market-data-cli -- populate -s AAPL,MSFT --start 2025-01-01
 
-# Using Yahoo Finance (no auth needed, limited to ~60 days)
+# Using Yahoo Finance (no auth needed, limited to ~60 days of 5-min bars)
 cargo run -p market-data-cli -- populate -s AAPL --start 2025-12-01 --provider yahoo
+
+# Using CBOE for VIX daily data (no auth, back to 1990)
+cargo run -p market-data-cli -- populate -s VIX --start 1990-01-01 --provider cboe
+
+# Using Yahoo for recent VIX 5-min bars (~60 days)
+cargo run -p market-data-cli -- populate -s "^VIX" --start 2025-12-01 --provider yahoo
 
 # Force re-download existing data
 cargo run -p market-data-cli -- populate -s AAPL --start 2025-01-01 --end 2025-01-31 --force

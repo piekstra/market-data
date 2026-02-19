@@ -53,7 +53,7 @@ cargo test --workspace
 
 1. Create a new file in `crates/market-data-providers/src/`
 2. Implement the `CandleProvider` trait
-3. Add JSON fixture tests for response parsing
+3. Add fixture tests for response parsing (JSON or CSV depending on provider)
 4. Register the provider in the CLI's `create_provider` function
 5. Document any required environment variables in `.env.example`
 

@@ -5,6 +5,7 @@ use chrono::NaiveDate;
 use clap::{Parser, Subcommand};
 use market_data_core::store::CandleStore;
 use market_data_providers::alpaca::AlpacaProvider;
+use market_data_providers::cboe::CboeProvider;
 use market_data_providers::provider::CandleProvider;
 use market_data_providers::yahoo::YahooProvider;
 use tracing::{info, warn};
@@ -73,7 +74,8 @@ fn create_provider(name: &str) -> Result<Box<dyn CandleProvider>> {
             AlpacaProvider::from_env().context("failed to create Alpaca provider")?,
         )),
         "yahoo" => Ok(Box::new(YahooProvider::new())),
-        other => anyhow::bail!("unknown provider: {other}. Expected: alpaca, yahoo"),
+        "cboe" => Ok(Box::new(CboeProvider::new())),
+        other => anyhow::bail!("unknown provider: {other}. Expected: alpaca, yahoo, cboe"),
     }
 }
 

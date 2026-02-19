@@ -6,7 +6,7 @@
 market-data/
 ├── crates/
 │   ├── market-data-core/       # Core types, Parquet I/O, CandleStore API
-│   ├── market-data-providers/  # Alpaca + Yahoo Finance data fetching
+│   ├── market-data-providers/  # Alpaca + Yahoo Finance + CBOE data fetching
 │   └── market-data-cli/        # CLI for populate, status, validate
 ├── data/                       # Gitignored, populated by CLI
 └── .github/workflows/          # CI (PRs) and Release (tags)
@@ -32,7 +32,8 @@ cargo run -p market-data-cli -- validate
 - **Candle**: `{ timestamp: DateTime<Utc>, open: Decimal, high: Decimal, low: Decimal, close: Decimal, volume: i64 }`
 - **Session**: `PreMarket` (4:00-9:30 ET), `Regular` (9:30-16:00 ET), `AfterHours` (16:00-20:00 ET) — derived from timestamp, not stored
 - **CandleStore**: Filesystem-backed store, one Parquet file per symbol per trading day at `data/{SYMBOL}/{YYYY}/{MM}/{YYYY-MM-DD}.parquet`
-- **CandleProvider**: Async trait for data fetching. Alpaca uses direct HTTP. Yahoo uses v8 chart API.
+- **CandleProvider**: Async trait for data fetching. Alpaca uses direct HTTP. Yahoo uses v8 chart API. CBOE downloads daily CSV for volatility indices.
+- **Providers**: `alpaca` (5-min equity bars), `yahoo` (5-min, ~60 day intraday history), `cboe` (daily OHLC for VIX/VVIX/VIX9D/OVX/GVZ, back to 1990, no volume)
 - Prices stored as decimal strings in Parquet for exact `rust_decimal` precision
 
 ## Versioning
