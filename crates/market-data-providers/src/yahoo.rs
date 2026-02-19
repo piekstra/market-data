@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
-use chrono::{NaiveDate, TimeZone, Utc};
+use chrono::{Datelike, NaiveDate, TimeZone, Utc};
 use market_data_core::candle::Candle;
 use reqwest::Client;
 use rust_decimal::Decimal;
 use serde::Deserialize;
+use tracing::{debug, warn};
 
 use crate::error::ProviderError;
 use crate::provider::CandleProvider;
@@ -279,6 +282,53 @@ impl CandleProvider for YahooProvider {
         let mut candles = parse_yahoo_result(&results[0])?;
         candles.sort_by_key(|c| c.timestamp);
         Ok(candles)
+    }
+
+    /// Override for Yahoo: fetch day by day with error tolerance and rate limiting.
+    /// Yahoo's 5-minute data is limited to ~60 days and can return errors for
+    /// non-trading days or when rate limited. This skips failed days instead of
+    /// aborting the entire range.
+    async fn fetch_candles_range(
+        &self,
+        symbol: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<(NaiveDate, Vec<Candle>)>, ProviderError> {
+        let mut by_date: BTreeMap<NaiveDate, Vec<Candle>> = BTreeMap::new();
+        let mut current = start;
+        let mut fetched = 0;
+
+        while current <= end {
+            if current.weekday().number_from_monday() <= 5 {
+                match self.fetch_candles(symbol, current).await {
+                    Ok(candles) if !candles.is_empty() => {
+                        let date = candles[0].timestamp.date_naive();
+                        by_date.entry(date).or_default().extend(candles);
+                        fetched += 1;
+                    }
+                    Ok(_) => {
+                        debug!("{symbol}: no data for {current} (holiday or no trading)");
+                    }
+                    Err(e) => {
+                        warn!("{symbol}: skipping {current}: {e}");
+                    }
+                }
+
+                // Brief delay between requests to avoid Yahoo rate limiting
+                if current < end {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+            current = current.succ_opt().unwrap();
+        }
+
+        // Sort candles within each date
+        for candles in by_date.values_mut() {
+            candles.sort_by_key(|c| c.timestamp);
+        }
+
+        debug!("{symbol}: fetched {fetched} day(s) from Yahoo");
+        Ok(by_date.into_iter().collect())
     }
 }
 
