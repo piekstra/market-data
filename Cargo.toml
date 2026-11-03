@@ -24,8 +24,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
-arrow = "57"
-parquet = { version = "57", features = ["arrow"] }
+arrow = "60"
+parquet = { version = "60", features = ["arrow"] }
 async-trait = "0.1"
 tempfile = "3"
 rust_decimal_macros = "1"
