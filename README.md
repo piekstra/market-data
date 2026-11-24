@@ -147,3 +147,8 @@ cargo test --workspace
 ## Versioning
 
 Semver. All crates share the workspace version. Releases are triggered by git tags (`v0.1.0`).
+
+## License
+
+Copyright (C) 2026 piekstra. Licensed under the GNU Affero General Public
+License, version 3 only (AGPL-3.0-only); see [LICENSE](LICENSE).
